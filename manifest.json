@@ -1,0 +1,46 @@
+{
+	"manifest_version": 3,
+	"name": "YT-Blocker",
+	"short_name": "YT-Blocker",
+	"version": "0.0.1",
+	"description": "Blocks videos from blacklisted channels in search results.",
+
+	"developer": {
+		"name": "Мельников М.А.",
+		"url": "https://github.com/melnik2003"
+	},
+
+	"icons": {
+		"48": "icons/logo1/logo1-48.png",
+		"96": "icons/logo1/logo1-96.png"
+	},
+
+	"action": {
+		"default_title": "YT-Blocker",
+		"default_popup": "popup/popup.html",
+		"default_icon": "icons/logo1/logo1.svg"
+	},
+
+	"options_ui": {
+		"page": "settings/settings.html",
+		"open_in_tab": true
+	},
+	
+	"background": {
+		"scripts": ["background.js"]
+	},
+
+	"content_scripts": [
+		{
+			"matches": ["https://www.youtube.com/*"],
+			"js": ["content.js"],
+			"run_at": "document_end"
+		}
+ 	],
+
+	"permissions": [
+		"storage",
+		"tabs",
+		"activeTab"
+	]
+}
