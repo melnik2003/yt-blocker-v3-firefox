@@ -19,9 +19,19 @@
 	</head>
 	<body>
 		<h1>Extension Settings</h1>
-		<label for="blacklist">Enter items to blacklist (one per line):</label>
-		<textarea id="blacklist" placeholder="Enter blacklist items here"></textarea>
-		<button id="saveButton">Save</button>
+		<p>The extension can't use real names to block videos from recommendations</p>
+		<br>
+		<section>
+			<label for="real-name-blacklist">Enter real names of channels you wish to blacklist (one per line):</label>
+			<textarea id="real-name-blacklist" placeholder="Enter blacklist items here"></textarea>
+			<button id="real-name-save-button">Save</button>
+		</section>
+		<br>
+		<section>
+			<label for="display-name-blacklist">Enter display names of channels you wish to blacklist (one per line):</label>
+			<textarea id="display-name-blacklist" placeholder="Enter blacklist items here"></textarea>
+			<button id="display-name-save-button">Save</button>
+		</section>
 
 		<script src="settings.js"></script>
 	</body>
