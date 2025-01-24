@@ -1,136 +1,177 @@
-// Function to get blacklists from storage
+// Store the loggingEnabled setting once when the extension starts
+let loggingEnabled = false;
+let logLevel = 'info';  // Default log level
+
+function initializeLogging() {
+    browser.storage.local.get('loggingEnabled').then(data => {
+        loggingEnabled = data.loggingEnabled || false;  // Default to false if not set
+    });
+}
+
+// Listen for changes in the local storage
+browser.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local') {
+        if (changes.loggingEnabled) {
+            loggingEnabled = changes.loggingEnabled.newValue;
+            logMessage(`Logging enabled: ${loggingEnabled}`);
+        }
+        // Add more settings you want to listen for here, e.g., blacklists
+        if (changes.realNameBlacklist || changes.displayNameBlacklist) {
+            logMessage('Blacklists updated, refreshing blocked videos.');
+            // Optionally, call your blocking function again to reapply the changes immediately
+            checkAndBlockVideos(); // This will recheck and block videos based on the updated blacklists
+        }
+    }
+});
+
+// Function to log messages only if logging is enabled
+function logMessage(message, level = 'info') {
+    const levels = ['debug', 'info', 'warn', 'error'];
+    if (levels.indexOf(level) >= levels.indexOf(logLevel) && loggingEnabled) {
+        const timestamp = new Date().toISOString();
+        const messageWithTimestamp = `[${timestamp}] ${level.toUpperCase()}: ${message}`;
+        console.log(messageWithTimestamp);
+    }
+}
+
+// Call this function when the extension starts to set up logging
+initializeLogging();
+
+// Caching blacklists and invalidating them after a set period
+let blacklistsCache = { data: null, timestamp: 0 };
+
 function getBlacklists() {
-    return browser.storage.local.get(['realNameBlacklist', 'displayNameBlacklist']);
+    const currentTimestamp = new Date().getTime();
+    if (blacklistsCache.data && currentTimestamp - blacklistsCache.timestamp < 60000) {
+        return Promise.resolve(blacklistsCache.data);
+    }
+
+    return browser.storage.local.get(['realNameBlacklist', 'displayNameBlacklist'])
+        .then(data => {
+            blacklistsCache = { data, timestamp: currentTimestamp };
+            return data;
+        })
+        .catch(error => {
+            logMessage(`Error fetching blacklists: ${error.message}`, 'error');
+            return {}; // Return empty blacklists on error
+        });
 }
 
 // Function to detect the current page type based on the URL
 function getPageType() {
     const path = window.location.pathname;
     const query = window.location.search;
+    const href = window.location.href;
 
-    if (path === '/' || path === '/home') {
-        return 'home'; // Home page
-    } else if (query.includes('search_query=')) {
-        return 'search'; // Search results page
-    } else if (path.includes('watch')) {
-        return 'watch'; // Watching a video (to catch recommended videos)
-    } else {
-        return 'unknown';
-    }
+    if (path === '/' || path === '/home') return 'home';
+    if (query.includes('search_query=')) return 'search';
+    if (href.includes('/watch')) return 'watch'; // More reliable for 'watch' page detection
+    return 'unknown';
 }
 
-// Function to block videos on the home page (real names and display names)
-function blockVideosFromHomePage(realNameBlacklist, displayNameBlacklist) {
-    const homePageVideos = document.querySelectorAll('ytd-rich-item-renderer');
-    console.log(`[${new Date().toISOString()}] Found ${homePageVideos.length} videos on the home page.`);
-
-    homePageVideos.forEach((videoItem, index) => {
-        // Extract the real name from the href attribute
+// General function to block videos based on blacklisted channels
+function blockVideos(videoItems, realNameBlacklist, displayNameBlacklist, pageType) {
+    videoItems.forEach((videoItem, index) => {
         const channelLink = videoItem.querySelector('#channel-name a');
-        const realChannelName = channelLink ? channelLink.href.split('/@')[1] : null;
+        if (channelLink) {
+            const realChannelName = channelLink.href.split('/@')[1];
+            const displayName = channelLink.textContent.trim();
 
-        // Extract the display name from the anchor text content
-        const displayName = channelLink ? channelLink.textContent.trim() : null;
+            logMessage(`Checking video (Real Name: ${realChannelName}, Display Name: ${displayName})`);
 
-        console.log(`[${new Date().toISOString()}] Checking video (Real Name: ${realChannelName}, Display Name: ${displayName})`);
+            const shouldBlock = 
+                (realChannelName && realNameBlacklist.includes(realChannelName)) || 
+                (displayName && displayNameBlacklist.includes(displayName));
 
-        // Check both real name and display name against the blacklists
-        if ((realChannelName && realNameBlacklist.includes(realChannelName)) || 
-            (displayName && displayNameBlacklist.includes(displayName))) {
-            console.log(`[${new Date().toISOString()}] Blocking home page video (Real Name: ${realChannelName}, Display Name: ${displayName}) (Video #${index + 1})`);
-            videoItem.style.display = 'none'; // Hide the video
-        } else {
-            console.log(`[${new Date().toISOString()}] Not blocking home page video (Real Name: ${realChannelName || 'Unknown'}, Display Name: ${displayName || 'Unknown'}).`);
+            logVideoBlockingDecision(pageType, realChannelName, displayName, shouldBlock);
+
+            if (shouldBlock) {
+                videoItem.style.display = 'none'; // Hide the video
+            }
         }
     });
 }
 
-
-// Function to block videos in search results (real names and display names)
-function blockVideosFromSearchResults(realNameBlacklist, displayNameBlacklist) {
-    const searchResultVideos = document.querySelectorAll('ytd-video-renderer, ytd-video-inline-engagement-panel-renderer'); // Adjust selector
-    console.log(`[${new Date().toISOString()}] Found ${searchResultVideos.length} videos in search results.`);
-
-    searchResultVideos.forEach((videoItem, index) => {
-        // Extract the real name from the href attribute
-        const channelLink = videoItem.querySelector('#channel-name a');
-        const realChannelName = channelLink ? channelLink.href.split('/@')[1] : null; // Get the part after "/@"
-
-        // Extract the display name from the anchor text content
-        const displayName = channelLink ? channelLink.textContent.trim() : null;
-
-        console.log(`[${new Date().toISOString()}] Checking video (Real Name: ${realChannelName}, Display Name: ${displayName})`);
-
-        // Check both real name and display name against the blacklists
-        if ((realChannelName && realNameBlacklist.includes(realChannelName)) || 
-            (displayName && displayNameBlacklist.includes(displayName))) {
-            console.log(`[${new Date().toISOString()}] Blocking search result video (Real Name: ${realChannelName}, Display Name: ${displayName}) (Video #${index + 1})`);
-            videoItem.style.display = 'none'; // Hide the video
-        } else {
-            console.log(`[${new Date().toISOString()}] Not blocking search result video (Real Name: ${realChannelName || 'Unknown'}, Display Name: ${displayName || 'Unknown'}).`);
-        }
-    });
+// Log the decision of whether to block or not
+function logVideoBlockingDecision(videoType, realChannelName, displayName, shouldBlock) {
+    const message = shouldBlock
+        ? `Blocking ${videoType} video (Real Name: ${realChannelName}, Display Name: ${displayName})`
+        : `Not blocking ${videoType} video (Real Name: ${realChannelName || 'Unknown'}, Display Name: ${displayName || 'Unknown'})`;
+    logMessage(message);
 }
 
-
-// Function to block videos in recommendations (display names)
-function blockVideosFromRecommendations(displayNameBlacklist) {
-    const recommendationVideos = document.querySelectorAll('ytd-compact-video-renderer'); // Adjust selector for recommendations
-    console.log(`[${new Date().toISOString()}] Found ${recommendationVideos.length} recommendation videos.`);
-
-    recommendationVideos.forEach((videoItem, index) => {
-        // Extract the display name from the yt-formatted-string inside ytd-channel-name
-        const channelNameElement = videoItem.querySelector('ytd-channel-name #text');
-        const displayName = channelNameElement ? channelNameElement.textContent.trim() : null;
-
-        console.log(`[${new Date().toISOString()}] Checking recommendation video (Display Name: ${displayName})`);
-
-        // Check if the display name is in the blacklist
-        if (displayName && displayNameBlacklist.includes(displayName)) {
-            console.log(`[${new Date().toISOString()}] Blocking recommendation video from display name: ${displayName} (Video #${index + 1})`);
-            videoItem.style.display = 'none'; // Hide the video
-        } else {
-            console.log(`[${new Date().toISOString()}] Not blocking recommendation video (Display name: ${displayName || 'Unknown'}).`);
-        }
-    });
+// Function to block videos on any page by selector
+function blockVideosFromPage(selector, realNameBlacklist, displayNameBlacklist, pageType) {
+    const videoItems = document.querySelectorAll(selector);
+    logMessage(`Found ${videoItems.length} videos on the ${pageType} page.`);
+    blockVideos(videoItems, realNameBlacklist, displayNameBlacklist, pageType);
 }
 
+// Function to check if the page type is relevant for blocking videos
+function shouldCheckForVideos() {
+    const pageType = getPageType();
+    return pageType === 'home' || pageType === 'search' || pageType === 'watch';
+}
+
+// Debounce function to limit how often checkAndBlockVideos is called
+let debounceTimeout = null;
+
+function debounce(func, delay) {
+    return function (...args) {
+        clearTimeout(debounceTimeout);
+        debounceTimeout = setTimeout(() => func(...args), delay);
+    };
+}
+
+// Optimized debounced version of checkAndBlockVideos
+const optimizedCheckAndBlockVideos = debounce(checkAndBlockVideos, 1000); // 1 second debounce
 
 // Main function to check page type and block videos accordingly
 function checkAndBlockVideos() {
-    getBlacklists().then(data => {
-        const realNameBlacklist = data.realNameBlacklist || [];
-        const displayNameBlacklist = data.displayNameBlacklist || [];
+    if (!shouldCheckForVideos()) return; // Skip check if page type is irrelevant
 
-        // Log the current blacklists for debugging purposes
-        console.log(`[${new Date().toISOString()}] Real name blacklist: ${realNameBlacklist.length} entries.`);
-        console.log(`[${new Date().toISOString()}] Display name blacklist: ${displayNameBlacklist.length} entries.`);
+    getBlacklists().then(({ realNameBlacklist = [], displayNameBlacklist = [] }) => {
+        logMessage(`Real name blacklist: ${realNameBlacklist.length} entries.`);
+        logMessage(`Display name blacklist: ${displayNameBlacklist.length} entries.`);
+
+        // Early exit if no blacklists are configured
+        if (realNameBlacklist.length === 0 && displayNameBlacklist.length === 0) {
+            logMessage('No blacklists configured. Exiting.', 'warning');
+            return;
+        }
 
         const pageType = getPageType();
 
-        // Block videos based on the page type
         if (pageType === 'home') {
-            console.log(`[${new Date().toISOString()}] Home page detected.`);
-            blockVideosFromHomePage(realNameBlacklist, displayNameBlacklist);
+            logMessage('Home page detected.');
+            blockVideosFromPage('ytd-rich-item-renderer', realNameBlacklist, displayNameBlacklist, 'home');
         } else if (pageType === 'search') {
-            console.log(`[${new Date().toISOString()}] Search page detected.`);
-            blockVideosFromSearchResults(realNameBlacklist, displayNameBlacklist);
+            logMessage('Search page detected.');
+            blockVideosFromPage('ytd-video-renderer, ytd-video-inline-engagement-panel-renderer', realNameBlacklist, displayNameBlacklist, 'search');
         } else if (pageType === 'watch') {
-            console.log(`[${new Date().toISOString()}] Watch page detected.`);
-            blockVideosFromRecommendations(displayNameBlacklist);
+            logMessage('Watch page detected.');
+            blockVideosFromPage('ytd-compact-video-renderer', realNameBlacklist, displayNameBlacklist, 'recommendations');
         } else {
-            console.log(`[${new Date().toISOString()}] Uknown page type detected. The script wouldn't block any videos.`);
+            logMessage('Unknown page type detected. The script wouldn\'t block any videos.', 'warning');
         }
     });
 }
 
-// Run the blocking function when the page is loaded
-checkAndBlockVideos();
+// Introduce a slight delay before the initial check to ensure content has loaded
+function onPageLoad() {
+    setTimeout(() => {
+        logMessage('Page initially loaded. Checking videos...');
+        checkAndBlockVideos();
+    }, 2000); // 2 seconds delay for initial content to load
+}
+
+// Run the initial check after page load
+onPageLoad();
 
 // MutationObserver to monitor the page for dynamically loaded content (like recommendations)
 const observer = new MutationObserver(() => {
-    console.log(`[${new Date().toISOString()}] Page updated. Checking for new videos...`);
-    checkAndBlockVideos();
+    logMessage('Page updated. Checking for new videos...');
+    optimizedCheckAndBlockVideos();
 });
 
 // Observe changes in the body of the document for dynamically loaded content
