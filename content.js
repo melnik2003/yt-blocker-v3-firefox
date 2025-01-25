@@ -2,24 +2,23 @@
 let loggingEnabled = false;
 let logLevel = 'info';  // Default log level
 
+// Initialize logging based on the settings stored in local storage
 function initializeLogging() {
     browser.storage.local.get('loggingEnabled').then(data => {
         loggingEnabled = data.loggingEnabled || false;  // Default to false if not set
     });
 }
 
-// Listen for changes in the local storage
+// Listen for changes in the local storage and handle logging or blacklists updates
 browser.storage.onChanged.addListener((changes, area) => {
     if (area === 'local') {
         if (changes.loggingEnabled) {
             loggingEnabled = changes.loggingEnabled.newValue;
             logMessage(`Logging enabled: ${loggingEnabled}`);
         }
-        // Add more settings you want to listen for here, e.g., blacklists
         if (changes.realNameBlacklist || changes.displayNameBlacklist) {
             logMessage('Blacklists updated, refreshing blocked videos.');
-            // Optionally, call your blocking function again to reapply the changes immediately
-            checkAndBlockVideos(); // This will recheck and block videos based on the updated blacklists
+            checkAndBlockVideos();  // Recheck and block videos based on the updated blacklists
         }
     }
 });
@@ -29,12 +28,11 @@ function logMessage(message, level = 'info') {
     const levels = ['debug', 'info', 'warn', 'error'];
     if (levels.indexOf(level) >= levels.indexOf(logLevel) && loggingEnabled) {
         const timestamp = new Date().toISOString();
-        const messageWithTimestamp = `[${timestamp}] ${level.toUpperCase()}: ${message}`;
-        console.log(messageWithTimestamp);
+        console.log(`[${timestamp}] ${level.toUpperCase()}: ${message}`);
     }
 }
 
-// Call this function when the extension starts to set up logging
+// Initialize logging when the extension starts
 initializeLogging();
 
 // Caching blacklists and invalidating them after a set period
@@ -65,46 +63,67 @@ function getPageType() {
 
     if (path === '/' || path === '/home') return 'home';
     if (query.includes('search_query=')) return 'search';
-    if (href.includes('/watch')) return 'watch'; // More reliable for 'watch' page detection
+    if (href.includes('/watch')) return 'watch';
     return 'unknown';
 }
 
-// General function to block videos based on blacklisted channels
+// Consolidated function to block videos based on the blacklists and page type
 function blockVideos(videoItems, realNameBlacklist, displayNameBlacklist, pageType) {
-    videoItems.forEach((videoItem, index) => {
-        const channelLink = videoItem.querySelector('#channel-name a');
-        if (channelLink) {
-            const realChannelName = channelLink.href.split('/@')[1];
-            const displayName = channelLink.textContent.trim();
+    videoItems.forEach((videoItem) => {
+        // Look for the correct channel name element in recommendations (watch page)
+        const channelNameElement = videoItem.querySelector('ytd-channel-name #text');
+        let realChannelName = null;
+        let displayName = null;
 
-            logMessage(`Checking video (Real Name: ${realChannelName}, Display Name: ${displayName})`);
+        if (channelNameElement) {
+            // For recommendations, we only have display name in the #text element
+            displayName = channelNameElement.textContent.trim();
+        }
 
-            const shouldBlock = 
+        // Log checking process
+        logMessage(`Checking video (Real Name: ${realChannelName || 'N/A'}, Display Name: ${displayName || 'N/A'})`);
+
+        // Logic to decide whether to block the video
+        let shouldBlock = false;
+
+        if (pageType === 'home' || pageType === 'search') {
+            shouldBlock = 
                 (realChannelName && realNameBlacklist.includes(realChannelName)) || 
                 (displayName && displayNameBlacklist.includes(displayName));
+        } else if (pageType === 'watch') {
+            // For watch page, only check display name for recommendations
+            shouldBlock = displayName && displayNameBlacklist.includes(displayName);
+        }
 
-            logVideoBlockingDecision(pageType, realChannelName, displayName, shouldBlock);
+        logVideoBlockingDecision(pageType, realChannelName, displayName, shouldBlock);
 
-            if (shouldBlock) {
-                videoItem.style.display = 'none'; // Hide the video
-            }
+        // Block the video if necessary
+        if (shouldBlock) {
+            videoItem.style.display = 'none'; // Hide the video
         }
     });
 }
 
-// Log the decision of whether to block or not
-function logVideoBlockingDecision(videoType, realChannelName, displayName, shouldBlock) {
+// Log the decision to block a video
+function logVideoBlockingDecision(pageType, realChannelName, displayName, shouldBlock) {
     const message = shouldBlock
-        ? `Blocking ${videoType} video (Real Name: ${realChannelName}, Display Name: ${displayName})`
-        : `Not blocking ${videoType} video (Real Name: ${realChannelName || 'Unknown'}, Display Name: ${displayName || 'Unknown'})`;
+        ? `Blocking ${pageType} video (Real Name: ${realChannelName}, Display Name: ${displayName})`
+        : `Not blocking ${pageType} video (Real Name: ${realChannelName || 'Unknown'}, Display Name: ${displayName || 'Unknown'})`;
     logMessage(message);
 }
 
-// Function to block videos on any page by selector
-function blockVideosFromPage(selector, realNameBlacklist, displayNameBlacklist, pageType) {
-    const videoItems = document.querySelectorAll(selector);
-    logMessage(`Found ${videoItems.length} videos on the ${pageType} page.`);
-    blockVideos(videoItems, realNameBlacklist, displayNameBlacklist, pageType);
+// General function to get video elements based on the page type
+function getVideoElements(pageType) {
+    switch (pageType) {
+        case 'home':
+            return document.querySelectorAll('ytd-rich-item-renderer');
+        case 'search':
+            return document.querySelectorAll('ytd-video-renderer, ytd-video-inline-engagement-panel-renderer');
+        case 'watch':
+            return document.querySelectorAll('ytd-compact-video-renderer');
+        default:
+            return [];
+    }
 }
 
 // Function to check if the page type is relevant for blocking videos
@@ -124,11 +143,11 @@ function debounce(func, delay) {
 }
 
 // Optimized debounced version of checkAndBlockVideos
-const optimizedCheckAndBlockVideos = debounce(checkAndBlockVideos, 1000); // 1 second debounce
+const optimizedCheckAndBlockVideos = debounce(checkAndBlockVideos, 1000);
 
 // Main function to check page type and block videos accordingly
 function checkAndBlockVideos() {
-    if (!shouldCheckForVideos()) return; // Skip check if page type is irrelevant
+    if (!shouldCheckForVideos()) return;
 
     getBlacklists().then(({ realNameBlacklist = [], displayNameBlacklist = [] }) => {
         logMessage(`Real name blacklist: ${realNameBlacklist.length} entries.`);
@@ -144,13 +163,13 @@ function checkAndBlockVideos() {
 
         if (pageType === 'home') {
             logMessage('Home page detected.');
-            blockVideosFromPage('ytd-rich-item-renderer', realNameBlacklist, displayNameBlacklist, 'home');
+            blockVideos(getVideoElements(pageType), realNameBlacklist, displayNameBlacklist, pageType);
         } else if (pageType === 'search') {
             logMessage('Search page detected.');
-            blockVideosFromPage('ytd-video-renderer, ytd-video-inline-engagement-panel-renderer', realNameBlacklist, displayNameBlacklist, 'search');
+            blockVideos(getVideoElements(pageType), realNameBlacklist, displayNameBlacklist, pageType);
         } else if (pageType === 'watch') {
             logMessage('Watch page detected.');
-            blockVideosFromPage('ytd-compact-video-renderer', realNameBlacklist, displayNameBlacklist, 'recommendations');
+            blockVideos(getVideoElements(pageType), realNameBlacklist, displayNameBlacklist, pageType);
         } else {
             logMessage('Unknown page type detected. The script wouldn\'t block any videos.', 'warning');
         }
@@ -168,7 +187,7 @@ function onPageLoad() {
 // Run the initial check after page load
 onPageLoad();
 
-// MutationObserver to monitor the page for dynamically loaded content (like recommendations)
+// MutationObserver to monitor the page for dynamically loaded content
 const observer = new MutationObserver(() => {
     logMessage('Page updated. Checking for new videos...');
     optimizedCheckAndBlockVideos();
