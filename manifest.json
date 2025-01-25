@@ -2,7 +2,7 @@
 	"manifest_version": 3,
 	"name": "YT-Blocker",
 	"short_name": "YT-Blocker",
-	"version": "0.2.0",
+	"version": "1.0.0",
 	"description": "Blocks videos from blacklisted channels in search results.",
 
 	"developer": {
