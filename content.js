@@ -58,44 +58,48 @@ function getBlacklists() {
 // Function to detect the current page type based on the URL
 function getPageType() {
     const path = window.location.pathname;
-    const query = window.location.search;
-    const href = window.location.href;
 
     if (path === '/' || path === '/home') return 'home';
-    if (query.includes('search_query=')) return 'search';
-    if (href.includes('/watch')) return 'watch';
+    if (path.includes('/results')) return 'search';
+    if (path.includes('/watch')) return 'watch';
     return 'unknown';
 }
 
 // Consolidated function to block videos based on the blacklists and page type
 function blockVideos(videoItems, realNameBlacklist, displayNameBlacklist, pageType) {
     videoItems.forEach((videoItem) => {
-        // Look for the correct channel name element in recommendations (watch page)
-        const channelNameElement = videoItem.querySelector('ytd-channel-name #text');
-        let realChannelName = null;
+        let realName = null;
         let displayName = null;
 
-        if (channelNameElement) {
-            // For recommendations, we only have display name in the #text element
-            displayName = channelNameElement.textContent.trim();
+        if (pageType === 'home' || pageType === 'search') {
+            // Extract the real name from the href attribute
+            let channelLink = null
+            channelLink = videoItem.querySelector('#channel-name a');
+            realName = channelLink ? channelLink.href.split('/@')[1] : null;
+            // Extract the display name from the anchor text content
+            displayName = channelLink ? channelLink.textContent.trim() : null;
+        } else if (pageType === 'watch') {
+            // Extract the display name from the yt-formatted-string inside ytd-channel-name
+            let channelNameElement = null
+            channelNameElement = videoItem.querySelector('ytd-channel-name #text');
+            displayName = channelNameElement ? channelNameElement.textContent.trim() : null;
         }
 
         // Log checking process
-        logMessage(`Checking video (Real Name: ${realChannelName || 'N/A'}, Display Name: ${displayName || 'N/A'})`);
+        logMessage(`Checking video (Real Name: ${realName || 'N/A'}, Display Name: ${displayName || 'N/A'})`);
 
         // Logic to decide whether to block the video
         let shouldBlock = false;
 
         if (pageType === 'home' || pageType === 'search') {
             shouldBlock = 
-                (realChannelName && realNameBlacklist.includes(realChannelName)) || 
+                (realName && realNameBlacklist.includes(realName)) || 
                 (displayName && displayNameBlacklist.includes(displayName));
         } else if (pageType === 'watch') {
-            // For watch page, only check display name for recommendations
             shouldBlock = displayName && displayNameBlacklist.includes(displayName);
         }
 
-        logVideoBlockingDecision(pageType, realChannelName, displayName, shouldBlock);
+        logVideoBlockingDecision(pageType, realName, displayName, shouldBlock);
 
         // Block the video if necessary
         if (shouldBlock) {
@@ -176,25 +180,31 @@ function checkAndBlockVideos() {
     });
 }
 
+function startObserver() {
+    // MutationObserver to monitor the page for dynamically loaded content
+    const observer = new MutationObserver(() => {
+        logMessage('Page updated. Checking for new videos...');
+        optimizedCheckAndBlockVideos();
+    });
+
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+    });
+}
+
 // Introduce a slight delay before the initial check to ensure content has loaded
 function onPageLoad() {
     setTimeout(() => {
         logMessage('Page initially loaded. Checking videos...');
         checkAndBlockVideos();
-    }, 2000); // 2 seconds delay for initial content to load
+    }, 1000); // Delay for initial content to load
+
+    setTimeout(() => {
+        logMessage('MutationObserver started.');
+        startObserver()
+    }, 2000); // Delay for MutationObserver
 }
 
 // Run the initial check after page load
 onPageLoad();
-
-// MutationObserver to monitor the page for dynamically loaded content
-const observer = new MutationObserver(() => {
-    logMessage('Page updated. Checking for new videos...');
-    optimizedCheckAndBlockVideos();
-});
-
-// Observe changes in the body of the document for dynamically loaded content
-observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-});
