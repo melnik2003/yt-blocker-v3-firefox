@@ -11,14 +11,14 @@
 	},
 
 	"icons": {
-		"48": "icons/logo1/logo1-48.png",
-		"96": "icons/logo1/logo1-96.png"
+		"48": "icons/logo1-48.png",
+		"96": "icons/logo1-96.png"
 	},
 
 	"action": {
 		"default_title": "YT-Blocker",
 		"default_popup": "popup/popup.html",
-		"default_icon": "icons/logo1/logo1.svg"
+		"default_icon": "icons/logo1.svg"
 	},
 
 	"options_ui": {
